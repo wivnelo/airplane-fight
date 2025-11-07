@@ -1,0 +1,65 @@
+[
+  {
+    "id": "a9e2cd6a-c79d-4101-8710-9b5458a99d2e",
+    "fingerprint": "a9e2cd6a-c79d-4101-8710-9b5458a99d2e",
+    "displayName": "test2",
+    "score": 1711,
+    "playedAt": "2025-10-23T12:40:54.815Z"
+  },
+  {
+    "id": "5c33cd4b-755b-4968-a568-a9f0f8135c12",
+    "fingerprint": "5c33cd4b-755b-4968-a568-a9f0f8135c12",
+    "displayName": "test2",
+    "score": 120,
+    "playedAt": "2025-10-23T12:31:21.866Z"
+  },
+  {
+    "id": "a18d6d54-be9d-4a61-853b-2ddf99653699",
+    "fingerprint": "52a7ebf9a8729082d589537e4e4d3d5b",
+    "displayName": "飞行员-52A7EBF9",
+    "score": 111,
+    "playedAt": "2025-10-23T13:44:41.794Z"
+  },
+  {
+    "id": "8a83dfbd-debc-4ce3-bf73-545e8e13abe8",
+    "fingerprint": "8a83dfbd-debc-4ce3-bf73-545e8e13abe8",
+    "displayName": "玩家",
+    "score": 51,
+    "playedAt": "2025-10-23T12:25:23.658Z"
+  },
+  {
+    "id": "a04da063-23f3-4998-b39d-496682862162",
+    "fingerprint": "a04da063-23f3-4998-b39d-496682862162",
+    "displayName": "test2",
+    "score": 32,
+    "playedAt": "2025-10-23T12:32:04.464Z"
+  },
+  {
+    "id": "c953b5b9-0d11-44a8-a14f-8caef782122c",
+    "fingerprint": "c953b5b9-0d11-44a8-a14f-8caef782122c",
+    "displayName": "test2",
+    "score": 18,
+    "playedAt": "2025-10-23T12:33:36.523Z"
+  },
+  {
+    "id": "dead40b1-a248-4179-b37d-fa9e24c2f547",
+    "fingerprint": "dead40b1-a248-4179-b37d-fa9e24c2f547",
+    "displayName": "玩家",
+    "score": 10,
+    "playedAt": "2025-10-23T12:49:49.911Z"
+  },
+  {
+    "id": "4f75c1f7-9f47-45ab-9ed1-b3e12a481dc9",
+    "fingerprint": "4f75c1f7-9f47-45ab-9ed1-b3e12a481dc9",
+    "displayName": "test1",
+    "score": 5,
+    "playedAt": "2025-10-23T12:25:44.006Z"
+  },
+  {
+    "id": "6188334a-898e-4da8-9330-98ba5a5ceb35",
+    "fingerprint": "6188334a-898e-4da8-9330-98ba5a5ceb35",
+    "displayName": "test2",
+    "score": 2,
+    "playedAt": "2025-10-23T12:41:11.427Z"
+  }
+]

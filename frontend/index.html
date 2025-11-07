@@ -1,0 +1,80 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>打飞机小游戏</title>
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <main class="page">
+      <section class="game-shell">
+        <header class="hud">
+          <div class="hud-left">
+            <button
+              id="sound-btn"
+              class="hud-btn sound-btn"
+              type="button"
+              aria-pressed="false"
+              aria-label="切换音效"
+            >
+              <span class="sound-icon" aria-hidden="true"></span>
+              <span class="sr-only">切换音效</span>
+            </button>
+          </div>
+          <div class="hud-center">
+            <div class="scoreboard">
+              得分：<span id="score">0</span>
+            </div>
+          </div>
+          <div class="hud-right">
+            <button id="leaderboard-btn" class="hud-btn" type="button">排行榜</button>
+          </div>
+        </header>
+        <div id="game-area" class="game-area">
+          <div id="player" class="player"></div>
+          <div id="overlay" class="overlay hidden">
+            <div class="overlay-content">
+              <div class="overlay-copy">
+                <p id="overlay-text">点击“开始游戏”</p>
+                <p class="hint">
+                  鼠标在界面内左右移动，按住鼠标左键或空格键持续射击
+                </p>
+                <p class="hint">击中特殊道具可短暂获得多排子弹火力</p>
+              </div>
+              <button id="start-btn" class="start-btn" type="button">开始游戏</button>
+            </div>
+          </div>
+        </div>
+      </section>
+      <section class="instructions">
+        <h1>玩法说明</h1>
+        <ul>
+          <li>点击画面内下方的按钮开始或重新开始游戏。</li>
+          <li>鼠标在游戏区域内左右移动即可控制飞机位置。</li>
+          <li>按住鼠标左键或空格键持续发射子弹。</li>
+          <li>击破敌机加分，被撞到则游戏失败。</li>
+          <li>每 30 秒会掉落随机飞机道具：彩色提升火力，青绿提供 5 秒护盾。</li>
+        </ul>
+      </section>
+    </main>
+
+    <section id="leaderboard-panel" class="leaderboard-panel" aria-hidden="true">
+      <div class="leaderboard-card">
+        <header class="leaderboard-header">
+          <button id="back-btn" class="hud-btn back-btn" type="button">返回游戏</button>
+          <h1>排行榜</h1>
+        </header>
+        <p class="leaderboard-hint">
+          成绩将基于设备标识自动记录，无需输入昵称。
+        </p>
+        <ol id="leaderboard-list" class="leaderboard-list">
+          <li class="empty">暂无数据</li>
+        </ol>
+        <p id="leaderboard-status" class="leaderboard-status" aria-live="polite"></p>
+      </div>
+    </section>
+
+    <script src="game.js" defer></script>
+  </body>
+</html>
