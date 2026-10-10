@@ -851,8 +851,3 @@ fetchLeaderboard();
 updateSoundButton();
 hideLeaderboard();
 resetGame();
-
-
-
-
-select * from trial_fee_record where origin_uid in (10710635,10710638,10710389,10709419,10701962);
