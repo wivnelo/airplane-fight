@@ -1,0 +1,4 @@
+# Runtime database; the historical JSON remains tracked and read-only.
+backend/data/*.sqlite
+backend/data/*.sqlite-shm
+backend/data/*.sqlite-wal

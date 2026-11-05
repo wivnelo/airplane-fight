@@ -1,4 +1,4 @@
-const API_BASE = "http://localhost:3000/api";
+const API_BASE = window.location.protocol === "file:" ? "http://localhost:3000/api" : "/api";
 const MAX_LEADERBOARD_ENTRIES = 10;
 
 const DIFFICULTY = {
@@ -28,6 +28,25 @@ const leaderboardBtn = document.getElementById("leaderboard-btn");
 const backBtn = document.getElementById("back-btn");
 const soundBtn = document.getElementById("sound-btn");
 const leaderboardPanel = document.getElementById("leaderboard-panel");
+const gameStatus = document.getElementById("game-status");
+const syncStatus = document.getElementById("sync-status");
+const retryBtn = document.getElementById("retry-btn");
+const pauseBtn = document.getElementById("pause-btn");
+const screenTitle = document.getElementById("screen-title");
+const resultScore = document.getElementById("result-score");
+const recordLabel = document.getElementById("record-label");
+const powerStatus = document.getElementById("power-status");
+const leaderboardRetryBtn = document.getElementById("leaderboard-retry-btn");
+const BEST_SCORE_KEY = "airplane.local-best.v1";
+let localBest = 0;
+try {
+  const saved = Number(localStorage.getItem(BEST_SCORE_KEY));
+  if (Number.isSafeInteger(saved) && saved > 0) localBest = saved;
+} catch { /* Private browsing can disable storage; keep this session's best. */ }
+const scoreClient = new ScoreClient(API_BASE, (message) => {
+  syncStatus.textContent = message;
+  retryBtn.hidden = scoreClient.pending.length === 0;
+});
 
 const PLAYER_WIDTH = 46;
 const ENEMY_WIDTH = 40;
@@ -81,6 +100,12 @@ const POWER_UP_TOTAL_WEIGHT = POWER_UP_TYPES.reduce((sum, type) => sum + type.we
 const state = {
   isRunning: false,
   isShooting: false,
+  isPaused: false,
+  pointerId: null,
+  pointerShooting: false,
+  keyboardShooting: false,
+  gameTime: 1,
+  run: null,
   bullets: [],
   enemies: [],
   powerUps: [],
@@ -96,7 +121,6 @@ const state = {
   enemySpeedMultiplier: 1,
   startTimestamp: null,
   leaderboard: [],
-  isSubmittingScore: false,
   statusTimer: null,
   audioContext: null,
   soundEnabled: true,
@@ -111,6 +135,27 @@ const state = {
 
 function clamp(value, min, max) {
   return Math.min(Math.max(value, min), max);
+}
+
+function updateBestScore() {
+  document.getElementById("best-score").textContent = localBest;
+  document.getElementById("leaderboard-best").textContent = localBest;
+}
+
+function setScreen(screen) {
+  document.body.dataset.screen = screen;
+  screenTitle.textContent = { menu: "打飞机", battle: "打飞机", paused: "稍作休息", report: "本局结束" }[screen];
+  resultScore.hidden = screen !== "report";
+  recordLabel.hidden = screen !== "report";
+  pauseBtn.hidden = screen !== "battle";
+}
+
+function updatePowerStatus() {
+  const effects = [];
+  if (state.activeFirePower) effects.push(`${state.activeFirePower.bulletCount} 排火力`);
+  if (state.hasShield) effects.push("护盾生效");
+  powerStatus.textContent = effects.join(" · ");
+  powerStatus.hidden = effects.length === 0;
 }
 
 function updateSoundButton() {
@@ -280,6 +325,7 @@ function applyPowerUp(type, timestamp) {
     player.classList.add("player--shield");
     setStatus("护盾已激活", true);
   }
+  updatePowerStatus();
 }
 
 function getActiveBulletCount() {
@@ -290,12 +336,14 @@ function updateActivePowerUp(timestamp) {
   if (state.activeFirePower && timestamp >= state.firePowerExpiresAt) {
     state.activeFirePower = null;
     state.firePowerExpiresAt = 0;
+    updatePowerStatus();
     setStatus("火力增益结束", true);
   }
   if (state.hasShield && timestamp >= state.shieldExpiresAt) {
     state.hasShield = false;
     state.shieldExpiresAt = 0;
     player.classList.remove("player--shield");
+    updatePowerStatus();
     setStatus("护盾已消失", true);
   }
 }
@@ -366,8 +414,10 @@ function showLeaderboard() {
   if (!leaderboardPanel || document.body.classList.contains("show-leaderboard")) {
     return;
   }
+  pauseGame();
   document.body.classList.add("show-leaderboard");
   leaderboardPanel.setAttribute("aria-hidden", "false");
+  backBtn.focus();
   fetchLeaderboard();
 }
 
@@ -377,21 +427,23 @@ function hideLeaderboard() {
   }
   document.body.classList.remove("show-leaderboard");
   leaderboardPanel.setAttribute("aria-hidden", "true");
-  setStatus("");
+  updateBounds();
+  if (state.isPaused) startBtn.focus();
+  else if (document.activeElement && leaderboardPanel.contains(document.activeElement)) startBtn.focus();
 }
 
 function setStatus(message = "", autoClear = false) {
-  if (!leaderboardStatus) {
+  if (!gameStatus) {
     return;
   }
   if (state.statusTimer) {
     clearTimeout(state.statusTimer);
     state.statusTimer = null;
   }
-  leaderboardStatus.textContent = message;
+  gameStatus.textContent = message;
   if (autoClear && message) {
     state.statusTimer = window.setTimeout(() => {
-      leaderboardStatus.textContent = "";
+      gameStatus.textContent = "";
       state.statusTimer = null;
     }, 2200);
   }
@@ -399,7 +451,10 @@ function setStatus(message = "", autoClear = false) {
 
 function resetGame() {
   state.isRunning = false;
-  state.isShooting = false;
+  state.isPaused = false;
+  stopShooting();
+  state.gameTime = 1;
+  setStatus("");
   state.bullets.forEach((bullet) => bullet.element.remove());
   state.enemies.forEach((enemy) => enemy.element.remove());
   state.powerUps.forEach((powerUp) => powerUp.element.remove());
@@ -423,31 +478,69 @@ function resetGame() {
   state.lastPowerUpSpawn = 0;
   state.overlayMessage = "点击“开始游戏”";
   player.classList.remove("player--shield");
+  gameArea.querySelectorAll(".explosion, .powerup-burst").forEach((el) => el.remove());
   if (state.animationFrame) {
     cancelAnimationFrame(state.animationFrame);
     state.animationFrame = null;
   }
   overlay.classList.remove("hidden");
-  overlayText.textContent = state.overlayMessage;
+  overlayText.textContent = "准备好，开始这次飞行。";
+  if (syncStatus.textContent.startsWith("本局 0 分")) syncStatus.textContent = "";
   startBtn.disabled = false;
+  startBtn.textContent = "开始游戏";
+  setScreen("menu");
+  updatePowerStatus();
 }
 
 function startGame() {
+  if (state.isPaused) { resumeGame(); return; }
   resetGame();
   hideLeaderboard();
   primeAudioContext();
   updateBounds();
   overlay.classList.add("hidden");
   state.isRunning = true;
+  setScreen("battle");
+  state.run = scoreClient.begin();
   startBtn.disabled = true;
   state.playerX = state.bounds.width / 2 - PLAYER_WIDTH / 2;
   player.style.left = `${state.playerX}px`;
   state.animationFrame = requestAnimationFrame(update);
 }
 
+function pauseGame() {
+  if (!state.isRunning || state.isPaused) return;
+  state.isPaused = true;
+  stopShooting();
+  cancelAnimationFrame(state.animationFrame);
+  state.animationFrame = null;
+  state.lastTime = 0;
+  overlayText.textContent = "已暂停，点击继续游戏";
+  overlay.classList.remove("hidden");
+  startBtn.textContent = "继续游戏";
+  startBtn.disabled = false;
+  setScreen("paused");
+}
+
+function resumeGame() {
+  if (!state.isRunning || !state.isPaused || document.hidden ||
+      document.body.classList.contains("show-leaderboard")) return;
+  // A user gesture must also restore audio suspended while the app was away.
+  if (state.soundEnabled) primeAudioContext();
+  updateBounds();
+  state.isPaused = false;
+  setScreen("battle");
+  state.lastTime = 0;
+  overlay.classList.add("hidden");
+  startBtn.disabled = true;
+  state.animationFrame = requestAnimationFrame(update);
+}
+
 function endGame(message) {
+  if (!state.isRunning) return;
   state.isRunning = false;
-  state.isShooting = false;
+  state.isPaused = false;
+  stopShooting();
   if (state.animationFrame) {
     cancelAnimationFrame(state.animationFrame);
     state.animationFrame = null;
@@ -456,6 +549,14 @@ function endGame(message) {
   overlayText.textContent = message;
   overlay.classList.remove("hidden");
   startBtn.disabled = false;
+  startBtn.textContent = "再来一局";
+  const isNewBest = state.score > localBest;
+  localBest = Math.max(localBest, state.score);
+  try { localStorage.setItem(BEST_SCORE_KEY, String(localBest)); } catch { /* Session best remains available. */ }
+  updateBestScore();
+  resultScore.textContent = state.score;
+  recordLabel.textContent = isNewBest ? "本机新纪录" : "每一次起飞，都是新的机会";
+  setScreen("report");
   state.activeFirePower = null;
   state.firePowerExpiresAt = 0;
   state.hasShield = false;
@@ -463,16 +564,23 @@ function endGame(message) {
   player.classList.remove("player--shield");
   state.powerUps.forEach((powerUp) => powerUp.element.remove());
   state.powerUps = [];
+  updatePowerStatus();
 
   if (state.score > 0) {
-    submitScore(state.score);
+    void scoreClient.finish(state.run, state.score, state.gameTime - 1);
+  } else if (!scoreClient.pending.length && !scoreClient.waiting && !scoreClient.flushing) {
+    syncStatus.textContent = "本局 0 分，无需提交；再来一次吧。";
   }
 }
 
 function updateBounds() {
-  const rect = gameArea.getBoundingClientRect();
-  state.bounds.width = rect.width;
-  state.bounds.height = rect.height;
+  const width = gameArea.clientWidth;
+  const height = gameArea.clientHeight;
+  if (!width || !height) return; // Hidden leaderboard must not erase game geometry.
+  state.bounds.width = width;
+  state.bounds.height = height;
+  state.playerX = clamp(state.playerX, 0, Math.max(0, width - PLAYER_WIDTH));
+  player.style.left = `${state.playerX}px`;
 }
 
 function updateDifficulty(timestamp) {
@@ -552,14 +660,19 @@ function spawnBulletAt(x, y) {
   state.bullets.push(bulletObj);
 }
 
-function update(timestamp) {
-  if (!state.isRunning) {
+function update(frameTime) {
+  state.animationFrame = null;
+  if (!state.isRunning || state.isPaused) {
     return;
   }
 
-  if (!state.lastTime) {
-    state.lastTime = timestamp;
-  }
+  const frameDelta = state.lastTime ? Math.max(0, frameTime - state.lastTime) : 0;
+  state.lastTime = frameTime;
+  // A suspended/blocked frame must not jump entities through collision bounds.
+  if (frameDelta > 250) { pauseGame(); return; }
+  state.gameTime += frameDelta;
+  const timestamp = state.gameTime;
+  const delta = frameDelta / 1000;
   updateDifficulty(timestamp);
   updateActivePowerUp(timestamp);
 
@@ -569,9 +682,6 @@ function update(timestamp) {
     spawnTimedPowerUp();
     state.lastPowerUpSpawn = timestamp;
   }
-
-  const delta = (timestamp - state.lastTime) / 1000;
-  state.lastTime = timestamp;
 
   if (timestamp - state.lastEnemySpawn > state.currentEnemyInterval) {
     spawnEnemy();
@@ -586,13 +696,18 @@ function update(timestamp) {
   const containerBox = gameArea.getBoundingClientRect();
   const playerBox = player.getBoundingClientRect();
 
-  updateBullets(delta);
-  updateEnemies(delta);
-  updatePowerUps(delta);
-  detectCollisions(containerBox, playerBox);
-  detectPowerUpCollisions(containerBox, playerBox, timestamp);
-  cleanupEntities();
-  cleanupPowerUps();
+  // Small collision steps prevent fast entities tunnelling past each other on a slow frame.
+  const steps = Math.max(1, Math.ceil(delta * 60));
+  for (let step = 0; step < steps; step++) {
+    updateBullets(delta / steps);
+    updateEnemies(delta / steps);
+    updatePowerUps(delta / steps);
+    detectCollisions(containerBox, playerBox);
+    if (!state.isRunning) return;
+    detectPowerUpCollisions(containerBox, playerBox, timestamp);
+    cleanupEntities();
+    cleanupPowerUps();
+  }
 
   state.animationFrame = requestAnimationFrame(update);
 }
@@ -617,6 +732,7 @@ function detectCollisions(containerBox, playerBox) {
   const playerTop = playerBox.top;
 
   state.enemies.forEach((enemy) => {
+    if (!state.isRunning) return;
     const enemyRect = enemy.element.getBoundingClientRect();
 
     if (!enemy.hit) {
@@ -661,7 +777,7 @@ function detectCollisions(containerBox, playerBox) {
           spawnExplosion(centerX, centerY);
           playHitSound();
         } else {
-          endGame(`被撞到了！最终得分：${state.score}`);
+          endGame("被撞到了，下次再试！");
         }
       }
     }
@@ -691,63 +807,70 @@ function cleanupEntities() {
 }
 
 function handlePointerMove(clientX) {
-  if (!state.isRunning) {
+  if (!state.isRunning || state.isPaused) {
     return;
   }
   const rect = gameArea.getBoundingClientRect();
-  const xWithin = clientX - rect.left;
+  const xWithin = clientX - rect.left - gameArea.clientLeft;
   const clamped = clamp(xWithin - PLAYER_WIDTH / 2, 0, state.bounds.width - PLAYER_WIDTH);
   state.playerX = clamped;
   player.style.left = `${clamped}px`;
 }
 
-function handleMouseMove(event) {
-  handlePointerMove(event.clientX);
-}
-
-function handleTouchMove(event) {
-  if (event.touches.length > 0) {
-    handlePointerMove(event.touches[0].clientX);
-  }
+function refreshShooting() {
+  state.isShooting = state.isRunning && !state.isPaused &&
+    (state.pointerShooting || state.keyboardShooting);
 }
 
 function handleKeyDown(event) {
-  if (!state.isRunning) {
-    return;
-  }
-  if (event.code === "Space") {
-    primeAudioContext();
-    state.isShooting = true;
-    event.preventDefault();
-  }
+  if (!state.isRunning || state.isPaused || event.code !== "Space" ||
+      event.target.closest("button, input, textarea, select")) return;
+  primeAudioContext();
+  state.keyboardShooting = true;
+  refreshShooting();
+  event.preventDefault();
 }
 
 function handleKeyUp(event) {
   if (event.code === "Space") {
-    state.isShooting = false;
+    state.keyboardShooting = false;
+    refreshShooting();
   }
 }
 
-function startShooting() {
-  primeAudioContext();
-  state.isShooting = true;
+function stopShooting() {
+  const pointerId = state.pointerId;
+  state.pointerId = null;
+  state.pointerShooting = false;
+  state.keyboardShooting = false;
+  state.isShooting = false;
+  if (pointerId !== null && gameArea.hasPointerCapture(pointerId)) gameArea.releasePointerCapture(pointerId);
 }
 
-function stopShooting() {
-  state.isShooting = false;
+function releasePointer(event) {
+  if (event.pointerId !== state.pointerId) return;
+  state.pointerId = null;
+  state.pointerShooting = false;
+  refreshShooting();
 }
 
 async function fetchLeaderboard() {
   if (!leaderboardList) {
     return;
   }
-  setStatus("排行榜加载中...");
+  if (leaderboardList.getAttribute("aria-busy") === "true") return;
+  leaderboardList.setAttribute("aria-busy", "true");
+  leaderboardRetryBtn.hidden = true;
+  leaderboardStatus.textContent = state.leaderboard.length ? "正在刷新，当前显示上次取得的成绩…" : "排行榜加载中…";
+  if (!state.leaderboard.length) {
+    leaderboardList.replaceChildren();
+    const loading = document.createElement("li");
+    loading.className = "empty";
+    loading.textContent = "正在获取飞行记录…";
+    leaderboardList.append(loading);
+  }
   try {
-    const response = await fetch(`${API_BASE}/leaderboard`);
-    if (!response.ok) {
-      throw new Error(`Request failed: ${response.status}`);
-    }
-    const payload = await response.json();
+    const payload = await scoreClient.request("/leaderboard");
     const entries = Array.isArray(payload?.entries)
       ? payload.entries
       : Array.isArray(payload)
@@ -755,12 +878,18 @@ async function fetchLeaderboard() {
       : [];
     state.leaderboard = entries.slice(0, MAX_LEADERBOARD_ENTRIES);
     renderLeaderboard();
-    setStatus("");
+    leaderboardStatus.textContent = "";
   } catch (error) {
     if (!state.leaderboard.length) {
       renderLeaderboard();
+      leaderboardList.firstElementChild.textContent = "飞行记录暂时不可用";
     }
-    setStatus("无法连接排行榜服务，请确认服务器已启动");
+    leaderboardStatus.textContent = state.leaderboard.length
+      ? "刷新失败，正在显示上次取得的成绩，排名可能已变化。"
+      : "暂时无法获取榜单，不影响你再飞一局。";
+    leaderboardRetryBtn.hidden = false;
+  } finally {
+    leaderboardList.setAttribute("aria-busy", "false");
   }
 }
 
@@ -772,60 +901,55 @@ function renderLeaderboard(entries = state.leaderboard) {
   if (!entries.length) {
     const empty = document.createElement("li");
     empty.className = "empty";
-    empty.textContent = "暂无数据";
+    empty.textContent = "暂无飞行记录，下一次突破从你开始。";
     leaderboardList.append(empty);
     return;
   }
   entries.forEach((entry, index) => {
     const li = document.createElement("li");
     const label = document.createElement("span");
+    label.className = "pilot-name";
+    const rank = document.createElement("span");
+    rank.className = "rank";
+    rank.textContent = String(index + 1).padStart(2, "0");
     const displayName = entry.displayName || entry.name || "匿名飞行员";
-    label.textContent = `${index + 1}. ${displayName}`;
+    label.textContent = displayName;
     const score = document.createElement("span");
     score.className = "score";
     score.textContent = entry.score;
-    li.append(label, score);
+    li.append(rank, label, score);
     leaderboardList.append(li);
   });
 }
 
-async function submitScore(score) {
-  if (score <= 0 || state.isSubmittingScore) {
-    return;
-  }
-  const payload = { score };
-  state.isSubmittingScore = true;
-  try {
-    const response = await fetch(`${API_BASE}/leaderboard`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify(payload),
-    });
-    if (!response.ok) {
-      throw new Error(`Request failed: ${response.status}`);
-    }
-    await fetchLeaderboard();
-    setStatus("成绩已提交", true);
-  } catch (error) {
-    setStatus("提交失败，请确认服务器已启动");
-  } finally {
-    state.isSubmittingScore = false;
-  }
-}
-
-startBtn.addEventListener("click", startGame);
-gameArea.addEventListener("mousemove", handleMouseMove);
-gameArea.addEventListener("mouseleave", stopShooting);
-gameArea.addEventListener("mousedown", startShooting);
-gameArea.addEventListener("mouseup", stopShooting);
-gameArea.addEventListener("touchstart", (event) => {
-  startShooting();
-  handleTouchMove(event);
+startBtn.addEventListener("click", () => { startGame(); startBtn.blur(); });
+pauseBtn.addEventListener("click", () => { pauseGame(); startBtn.focus(); });
+document.getElementById("overlay-leaderboard-btn").addEventListener("click", showLeaderboard);
+leaderboardRetryBtn.addEventListener("click", () => { void fetchLeaderboard(); });
+gameArea.addEventListener("pointerdown", (event) => {
+  if (!state.isRunning || state.isPaused || !event.isPrimary || event.button !== 0 ||
+      event.target.closest("button")) return;
+  event.preventDefault();
+  state.pointerId = event.pointerId;
+  state.pointerShooting = true;
+  primeAudioContext();
+  gameArea.setPointerCapture(event.pointerId);
+  handlePointerMove(event.clientX);
+  refreshShooting();
 });
-gameArea.addEventListener("touchmove", handleTouchMove);
-gameArea.addEventListener("touchend", stopShooting);
+gameArea.addEventListener("pointermove", (event) => {
+  if (event.pointerType === "mouse" || event.pointerId === state.pointerId) handlePointerMove(event.clientX);
+});
+for (const type of ["pointerup", "pointercancel", "lostpointercapture"]) {
+  gameArea.addEventListener(type, releasePointer);
+}
+window.addEventListener("blur", pauseGame);
+document.addEventListener("visibilitychange", () => { if (document.hidden) pauseGame(); });
+window.addEventListener("online", () => { void scoreClient.flush(); });
+retryBtn.addEventListener("click", () => { void scoreClient.flush(); });
+window.addEventListener("beforeunload", (event) => {
+  if (scoreClient.pending.length || scoreClient.waiting) { event.preventDefault(); event.returnValue = ""; }
+});
 window.addEventListener("resize", updateBounds);
 window.addEventListener("keydown", handleKeyDown);
 window.addEventListener("keyup", handleKeyUp);
@@ -847,7 +971,10 @@ window.addEventListener("keydown", (event) => {
 });
 
 renderLeaderboard();
+updateBestScore();
 fetchLeaderboard();
 updateSoundButton();
 hideLeaderboard();
 resetGame();
+
+void scoreClient.flush();

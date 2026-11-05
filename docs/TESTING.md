@@ -1,78 +1,72 @@
 # 运行与验证手册
 
-[项目入口](../README.md) · [当前结果与缺陷](../STATUS.md)。本页是操作流程，不宣称所有步骤已经通过。
+[项目入口](../README.md) · [当前结果/剩余边界](../STATUS.md)。要求 Node 24+（内置 SQLite）。本手册不代表真机或公开发布已经通过。
 
-## 基础检查
+## 自动回归
 
-仓库根目录，Node/npm 已安装；Python 3 用于静态服务，curl 用于 HTTP 检查：
+从仓库根目录运行：
 
 ```bash
-node --version
-npm --version
-git status --short
+npm --prefix backend ci
+npm --prefix backend test
 node --check frontend/game.js
+node --check frontend/scores.js
 node --check backend/server.js
-node -e "for (const f of ['backend/package.json','backend/package-lock.json','backend/data/leaderboard.json']) JSON.parse(require('node:fs').readFileSync(f,'utf8')); console.log('JSON OK')"
-npm --prefix backend audit
+node --check backend/store.js
+# 需预先安装 Python playwright 包及 Chromium；不需要安装项目业务依赖之外的 JS 包
+python3 tests/browser_smoke.py
+python3 tests/browser_ui.py
+python3 tests/browser_playtest.py
 ```
 
-审计需要网络，有告警可能非零退出；不自动运行 audit fix。项目仅 start/dev 脚本，没有 test/build/lint。正常启动见 README。
+Chromium 路径可用 `BROWSER_EXECUTABLE` 指定。Python Playwright 未安装时，可在独立虚拟环境安装，避免改业务依赖。浏览器脚本会自行在临时目录启动 API/SQLite 并停止、清理；API/队列测试也使用临时目录，包含预期故障日志。测试输出的错误日志不等于测试失败，以断言/退出码为准。没有浏览器时明确标记未验。
 
-## 隔离写入与故障测试
+UI 脚本覆盖四个视口、四个主界面与暂停、碰撞盒尺寸、点击区、记录保存、榜单/同步状态和减弱动画。异常网络和分数展示使用显式受控响应或函数场景，不写真实榜单。浏览器截图仅作内部视觉复核。
 
-只针对临时副本。先确认 3000/8080 端口未被需要保留的服务占用，不结束未知服务。终端 A，从仓库根目录执行：
+Node 测试涵盖：并发保存、幂等重试、跨进程事务、只读历史导入、失败回滚/API 存活、严格输入、伪造请求头与凭证、时间/分数限制、来源/限流、连续两局提交、本地重载重试和离线运行。浏览器测试含真实输入与受控函数场景，脚本逐项标注；不能把受控场景当自然游玩。
+
+`browser_playtest.py` 使用 Chromium/CDP：真实 HTTP 请求限速为 750ms 延迟、128KiB/s 下载和 32KiB/s 上传，检查断网/恢复；响应丢失场景先让隔离后端实际保存再丢弃回复，刷新后验证同一负载幂等重试。分数与音频暂停由测试明确布置。Web Audio 使用真实用户点击解锁，再将原合成函数渲染至 OfflineAudioContext 检查波形/静音，不是扬声器听感或 Safari 证明。
+
+UI 脚本支持 `BROWSER_ENGINE=webkit`，须先成功安装对应 WebKit；具体网络阻塞记录在 STATUS，运行方法见 [私人试玩](PLAYTEST.md)。
+
+## 本地试玩（使用隔离数据）
 
 ```bash
 review_dir=$(mktemp -d /tmp/airplane-fight-review.XXXXXX)
-mkdir -p "$review_dir/backend/data"
-cp backend/server.js backend/package.json backend/package-lock.json "$review_dir/backend/"
-cp -R frontend "$review_dir/frontend"
-printf '[]\n' > "$review_dir/backend/data/leaderboard.json"
-npm ci --prefix "$review_dir/backend"
-printf '测试副本：%s\n' "$review_dir"
-PORT=3000 node "$review_dir/backend/server.js"
+DATA_DIR="$review_dir" HOST=127.0.0.1 PORT=3100 node backend/server.js
 ```
 
-终端 B，替换为 A 输出的实际路径再执行：
+打开 `http://127.0.0.1:3100`，前端和 API 同源。空 DATA_DIR 不导入已有榜单。需要验证历史迁移时，把 JSON **复制**到此目录，再启动；不以仓库原文件做损坏/写入测试。
 
 ```bash
-review_dir=/tmp/airplane-fight-review.REPLACE_WITH_ACTUAL_SUFFIX
-python3 -m http.server 8080 --bind 127.0.0.1 --directory "$review_dir/frontend"
+curl --fail http://127.0.0.1:3100/health
+curl --fail http://127.0.0.1:3100/api/leaderboard
 ```
 
-浏览器打开 `http://127.0.0.1:8080`。端口 3000 对应当前写死的前端 API；需改端口时只改临时副本并记录差异。第三个终端只对临时 API 做以下提交：
+开始本局会调用 POST `/api/runs`。提交需要该局 runId/token 及整数 score/durationMs，不能再用旧版 `{score:42}` 冒充有效成绩。API 自动测试已经覆盖提交流程；不把测试令牌打印到共享日志或向真实榜单提交假分。
 
-```bash
-curl --fail http://localhost:3000/health
-curl --fail http://localhost:3000/api/leaderboard
-curl --fail -X POST http://localhost:3000/api/leaderboard \
-  -H 'Content-Type: application/json' -H 'User-Agent: airplane-review' \
-  --data '{"score":42}'
-curl --fail -X POST http://localhost:3000/api/leaderboard \
-  -H 'Content-Type: application/json' -H 'User-Agent: airplane-review' \
-  --data '{"score":10}'
-```
+## 手工验收
 
-核对同一指纹仍为 42 分；重启临时 API 检查持久化。并发 20 请求、损坏 JSON、写入异常、伪造请求头/分数只用于临时数据，断言见 STATUS AF-02/03/04；记录请求数量、响应与最终存储。一次并发测试不等于持续负载验收。不要对真实榜单发测试 POST。
-
-## 原型浏览器复测
-
-| 场景 | 操作/证据 |
+| 场景 | 检查 |
 | --- | --- |
-| 开始/移动/射击 | 点击开始，鼠标左右到边缘，按住/松开鼠标和空格，观察计分 |
-| 死亡/重开 | 自然碰撞结束，再开始，核对分数/实体/道具重置 |
-| 榜单 | 有敌机或子弹时开榜再返回，记录误死亡/误计分 |
-| 触摸 | 触摸、横向拖动、松手、带纵向位移拖动；记录滚页/取消/射击状态 |
-| 尺寸 | 飞机在右缘，600 宽缩至 320；记录位置和可见性；检查 320×568/390×844/844×390 |
-| 道具 | 四类领取、生效、到期；区分自然获得和调用原有函数布置场景 |
-| 网络 | API 不可达/返回错；首局提交延迟后次局结束，核对成绩与可见状态 |
-| 音效 | 开关标识；听音另在有声音输出的设备确认 |
-| 生命周期 | 切后台/失焦再返回，记录时间/输入；新版本依确认后的方案验收 |
+| 输入 | 鼠标横移、按住/松开鼠标和空格；手机按住/横拖/松手/取消；没有自动射击 |
+| 生命周期 | 开榜、后台、失焦暂停，不误死亡/计分；返回主动继续，不跳过道具时长，不残留射击 |
+| 碰撞/重开 | 自然碰撞仍为无盾一次死亡；结束不继续循环；重开清零，不改变道具或难度规则 |
+| 手机 | 320×568、390×844、844×390 布局；带纵向位移的拖动不滚页；宽度变化后飞机可见；真机另验 |
+| 同步 | 连续两局、请求超时/503、重试/刷新恢复待提交、明确拒绝、开始时无凭证；继续游玩不丢上一局任务 |
+| 规则边界 | 自动射击、150 秒、3 次容错未启用；现有子弹同帧多目标规则未改 |
+| 声音 | 开关标识和真实扬声器音效分开记录 |
 
-新方案实现后需更新操作步骤，自动射击和新 UI 不能用原型按住射击的结果替代验证。Playwright 等自动化工具当前不是项目依赖；临时测试不宣称为已建立测试套件。没有浏览器则明确未验，不用代码推测冒充实测。
+## 数据、故障与备份边界
 
-## 证据与结束
+首次成功启动只读导入 legacy JSON，后续以 SQLite 为准；迁移标记与导入在同一事务，损坏源文件会阻止导入并使 API/health 返回 503，页面仍可离线玩。不得通过清空 JSON/数据库来“修复”故障。已有数据库不可用时保留文件并排查；停止服务后恢复已验证备份，必须先在副本演练。
 
-记录 commit、设备/浏览器/视口、步骤、预期/实际、是否受控场景、AF 编号。截图必须能实际交付；无法上传则保留文字复现，不能伪造附件链接。
+运行数据库使用 WAL；备份需 SQLite 一致性备份，或停止所有使用该库的进程并确认关闭后复制完整状态。不要只复制正在写入的 `.sqlite` 而忽略 WAL。本轮未做生产备份、断电、磁盘满或生产多实例部署验收。
 
-终端 A/B 各 Ctrl+C 停止本次服务，确认测试端口关闭。保留必要证据后清理自己创建的临时目录。`git status --short`、`git diff --name-only` 应显示仅授权范围；源码、榜单和安装产物不得混入文档提交。
+防作弊仅凭证、幂等、输入/上限与频率检查；没有回放或服务端权威模拟，合理范围假分仍可能通过。部署前还需真实身份策略、代理/TLS、全局限流、审计债务与数据运维，不得将基础检查等同竞技公平。
+
+## 结束与证据
+
+记录 commit、设备/浏览器/视口、步骤、预期/实际、是否受控、AF 编号。临时服务用 Ctrl+C 停止并确认端口关闭。截图不可交付时用文字证据，不提供假附件。
+
+`git diff -- backend/data/leaderboard.json` 应为空；数据库/WAL 不入库，原型 commit 保留。仓库仍跟踪旧 node_modules，安装产物变化不混入本轮；没有自动 audit fix。需要审计时运行 `npm --prefix backend audit`，区分依赖告警和已验证利用条件。
