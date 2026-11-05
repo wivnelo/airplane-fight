@@ -31,6 +31,18 @@ const leaderboardPanel = document.getElementById("leaderboard-panel");
 const gameStatus = document.getElementById("game-status");
 const syncStatus = document.getElementById("sync-status");
 const retryBtn = document.getElementById("retry-btn");
+const pauseBtn = document.getElementById("pause-btn");
+const screenTitle = document.getElementById("screen-title");
+const resultScore = document.getElementById("result-score");
+const recordLabel = document.getElementById("record-label");
+const powerStatus = document.getElementById("power-status");
+const leaderboardRetryBtn = document.getElementById("leaderboard-retry-btn");
+const BEST_SCORE_KEY = "airplane.local-best.v1";
+let localBest = 0;
+try {
+  const saved = Number(localStorage.getItem(BEST_SCORE_KEY));
+  if (Number.isSafeInteger(saved) && saved > 0) localBest = saved;
+} catch { /* Private browsing can disable storage; keep this session's best. */ }
 const scoreClient = new ScoreClient(API_BASE, (message) => {
   syncStatus.textContent = message;
   retryBtn.hidden = scoreClient.pending.length === 0;
@@ -123,6 +135,27 @@ const state = {
 
 function clamp(value, min, max) {
   return Math.min(Math.max(value, min), max);
+}
+
+function updateBestScore() {
+  document.getElementById("best-score").textContent = localBest;
+  document.getElementById("leaderboard-best").textContent = localBest;
+}
+
+function setScreen(screen) {
+  document.body.dataset.screen = screen;
+  screenTitle.textContent = { menu: "打飞机", battle: "打飞机", paused: "稍作休息", report: "本局结束" }[screen];
+  resultScore.hidden = screen !== "report";
+  recordLabel.hidden = screen !== "report";
+  pauseBtn.hidden = screen !== "battle";
+}
+
+function updatePowerStatus() {
+  const effects = [];
+  if (state.activeFirePower) effects.push(`${state.activeFirePower.bulletCount} 排火力`);
+  if (state.hasShield) effects.push("护盾生效");
+  powerStatus.textContent = effects.join(" · ");
+  powerStatus.hidden = effects.length === 0;
 }
 
 function updateSoundButton() {
@@ -292,6 +325,7 @@ function applyPowerUp(type, timestamp) {
     player.classList.add("player--shield");
     setStatus("护盾已激活", true);
   }
+  updatePowerStatus();
 }
 
 function getActiveBulletCount() {
@@ -302,12 +336,14 @@ function updateActivePowerUp(timestamp) {
   if (state.activeFirePower && timestamp >= state.firePowerExpiresAt) {
     state.activeFirePower = null;
     state.firePowerExpiresAt = 0;
+    updatePowerStatus();
     setStatus("火力增益结束", true);
   }
   if (state.hasShield && timestamp >= state.shieldExpiresAt) {
     state.hasShield = false;
     state.shieldExpiresAt = 0;
     player.classList.remove("player--shield");
+    updatePowerStatus();
     setStatus("护盾已消失", true);
   }
 }
@@ -381,6 +417,7 @@ function showLeaderboard() {
   pauseGame();
   document.body.classList.add("show-leaderboard");
   leaderboardPanel.setAttribute("aria-hidden", "false");
+  backBtn.focus();
   fetchLeaderboard();
 }
 
@@ -392,6 +429,7 @@ function hideLeaderboard() {
   leaderboardPanel.setAttribute("aria-hidden", "true");
   updateBounds();
   if (state.isPaused) startBtn.focus();
+  else if (document.activeElement && leaderboardPanel.contains(document.activeElement)) startBtn.focus();
 }
 
 function setStatus(message = "", autoClear = false) {
@@ -446,9 +484,12 @@ function resetGame() {
     state.animationFrame = null;
   }
   overlay.classList.remove("hidden");
-  overlayText.textContent = state.overlayMessage;
+  overlayText.textContent = "准备好，开始这次飞行。";
+  if (syncStatus.textContent.startsWith("本局 0 分")) syncStatus.textContent = "";
   startBtn.disabled = false;
   startBtn.textContent = "开始游戏";
+  setScreen("menu");
+  updatePowerStatus();
 }
 
 function startGame() {
@@ -459,6 +500,7 @@ function startGame() {
   updateBounds();
   overlay.classList.add("hidden");
   state.isRunning = true;
+  setScreen("battle");
   state.run = scoreClient.begin();
   startBtn.disabled = true;
   state.playerX = state.bounds.width / 2 - PLAYER_WIDTH / 2;
@@ -477,6 +519,7 @@ function pauseGame() {
   overlay.classList.remove("hidden");
   startBtn.textContent = "继续游戏";
   startBtn.disabled = false;
+  setScreen("paused");
 }
 
 function resumeGame() {
@@ -484,6 +527,7 @@ function resumeGame() {
       document.body.classList.contains("show-leaderboard")) return;
   updateBounds();
   state.isPaused = false;
+  setScreen("battle");
   state.lastTime = 0;
   overlay.classList.add("hidden");
   startBtn.disabled = true;
@@ -504,6 +548,13 @@ function endGame(message) {
   overlay.classList.remove("hidden");
   startBtn.disabled = false;
   startBtn.textContent = "再来一局";
+  const isNewBest = state.score > localBest;
+  localBest = Math.max(localBest, state.score);
+  try { localStorage.setItem(BEST_SCORE_KEY, String(localBest)); } catch { /* Session best remains available. */ }
+  updateBestScore();
+  resultScore.textContent = state.score;
+  recordLabel.textContent = isNewBest ? "本机新纪录" : "每一次起飞，都是新的机会";
+  setScreen("report");
   state.activeFirePower = null;
   state.firePowerExpiresAt = 0;
   state.hasShield = false;
@@ -511,9 +562,12 @@ function endGame(message) {
   player.classList.remove("player--shield");
   state.powerUps.forEach((powerUp) => powerUp.element.remove());
   state.powerUps = [];
+  updatePowerStatus();
 
   if (state.score > 0) {
     void scoreClient.finish(state.run, state.score, state.gameTime - 1);
+  } else if (!scoreClient.pending.length && !scoreClient.waiting && !scoreClient.flushing) {
+    syncStatus.textContent = "本局 0 分，无需提交；再来一次吧。";
   }
 }
 
@@ -721,7 +775,7 @@ function detectCollisions(containerBox, playerBox) {
           spawnExplosion(centerX, centerY);
           playHitSound();
         } else {
-          endGame(`被撞到了！最终得分：${state.score}`);
+          endGame("被撞到了，下次再试！");
         }
       }
     }
@@ -802,7 +856,17 @@ async function fetchLeaderboard() {
   if (!leaderboardList) {
     return;
   }
-  leaderboardStatus.textContent = "排行榜加载中...";
+  if (leaderboardList.getAttribute("aria-busy") === "true") return;
+  leaderboardList.setAttribute("aria-busy", "true");
+  leaderboardRetryBtn.hidden = true;
+  leaderboardStatus.textContent = state.leaderboard.length ? "正在刷新，当前显示上次取得的成绩…" : "排行榜加载中…";
+  if (!state.leaderboard.length) {
+    leaderboardList.replaceChildren();
+    const loading = document.createElement("li");
+    loading.className = "empty";
+    loading.textContent = "正在获取飞行记录…";
+    leaderboardList.append(loading);
+  }
   try {
     const payload = await scoreClient.request("/leaderboard");
     const entries = Array.isArray(payload?.entries)
@@ -816,8 +880,14 @@ async function fetchLeaderboard() {
   } catch (error) {
     if (!state.leaderboard.length) {
       renderLeaderboard();
+      leaderboardList.firstElementChild.textContent = "飞行记录暂时不可用";
     }
-    leaderboardStatus.textContent = "无法连接排行榜服务；当前列表可能不是最新成绩";
+    leaderboardStatus.textContent = state.leaderboard.length
+      ? "刷新失败，正在显示上次取得的成绩，排名可能已变化。"
+      : "暂时无法获取榜单，不影响你再飞一局。";
+    leaderboardRetryBtn.hidden = false;
+  } finally {
+    leaderboardList.setAttribute("aria-busy", "false");
   }
 }
 
@@ -829,24 +899,31 @@ function renderLeaderboard(entries = state.leaderboard) {
   if (!entries.length) {
     const empty = document.createElement("li");
     empty.className = "empty";
-    empty.textContent = "暂无数据";
+    empty.textContent = "暂无飞行记录，下一次突破从你开始。";
     leaderboardList.append(empty);
     return;
   }
   entries.forEach((entry, index) => {
     const li = document.createElement("li");
     const label = document.createElement("span");
+    label.className = "pilot-name";
+    const rank = document.createElement("span");
+    rank.className = "rank";
+    rank.textContent = String(index + 1).padStart(2, "0");
     const displayName = entry.displayName || entry.name || "匿名飞行员";
-    label.textContent = `${index + 1}. ${displayName}`;
+    label.textContent = displayName;
     const score = document.createElement("span");
     score.className = "score";
     score.textContent = entry.score;
-    li.append(label, score);
+    li.append(rank, label, score);
     leaderboardList.append(li);
   });
 }
 
 startBtn.addEventListener("click", () => { startGame(); startBtn.blur(); });
+pauseBtn.addEventListener("click", () => { pauseGame(); startBtn.focus(); });
+document.getElementById("overlay-leaderboard-btn").addEventListener("click", showLeaderboard);
+leaderboardRetryBtn.addEventListener("click", () => { void fetchLeaderboard(); });
 gameArea.addEventListener("pointerdown", (event) => {
   if (!state.isRunning || state.isPaused || !event.isPrimary || event.button !== 0 ||
       event.target.closest("button")) return;
@@ -892,6 +969,7 @@ window.addEventListener("keydown", (event) => {
 });
 
 renderLeaderboard();
+updateBestScore();
 fetchLeaderboard();
 updateSoundButton();
 hideLeaderboard();
