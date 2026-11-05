@@ -8,7 +8,7 @@
 - 已实现：开榜/失焦/后台暂停与主动继续、有效游戏计时、慢帧分步碰撞、Pointer Events/触摸禁滚屏、缩放边界、可见状态、逐局持久提交队列、SQLite 事务与只读历史导入、凭证/幂等/严格输入/基本分数与频率检查。
 - 沿用现有 CSS 飞机与图形，手动射击、单次无盾碰撞死亡、道具和难度规则保持；没有启用自动射击、150 秒、3 次容错或新美术。
 - 仍是可试玩原型：防作弊仅基础防护，不是权威模拟；真机和发布验收未完成。
-- 文档基线为 [草稿 PR #1](https://github.com/wivnelo/airplane-fight/pull/1)，仍未合并。本轮代码分支 `fix/playability-and-scores-20261105`，基于该文档树继续，代码草稿 PR 交付后在此登记。
+- 文档基线为 [草稿 PR #1](https://github.com/wivnelo/airplane-fight/pull/1)，仍未合并。本轮代码分支 `fix/playability-and-scores-20261105` 已同步至 [代码草稿 PR #2](https://github.com/wivnelo/airplane-fight/pull/2)，以文档分支为 base，等待评审；未合并任何分支。
 - 原型基线 `998bce66b4d1ad1e8c8e7c0823dc04106b2c6706` 保留在 Git 历史与本地 `archive/prototype-998bce66` 分支。历史 JSON 与该提交逐字节一致；隔离副本导入 9 条，最高分 1711。
 - Linear 由独立任务维护，本轮不重复创建，继续使用 AF 编号关联。
 
