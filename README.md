@@ -12,6 +12,7 @@ Airplane Fight 正从练手原型推进为正式浏览器游戏。产品目标�
 | --- | --- |
 | [STATUS](STATUS.md) | 当前状态、实证缺陷、已验/未验、分阶段验收 |
 | [玩法与界面方案](docs/GAME_DESIGN.md) | 默认推荐的短局休闲拼分方案；与已实现功能明确区分 |
+| [私人试玩](docs/PLAYTEST.md) | 本机启动器、手机接入选项、权限和真机验收步骤 |
 | [运行与验证](docs/TESTING.md) | 隔离测试、命令、复测步骤和证据要求 |
 | [设计交接](docs/DESIGN.md) | 视觉与界面交付要求；实际进度统一见 STATUS |
 | [像素素材来源](frontend/assets/README.md) | 素材来源、使用范围与碰撞尺寸约束 |
@@ -42,6 +43,8 @@ Airplane Fight 正从练手原型推进为正式浏览器游戏。产品目标�
 开榜、切后台/失焦或过长卡帧会暂停计时和输入，返回后主动继续。当前提供独立暂停按钮，没有自动射击、键盘左右移动、固定时长局、关卡或 Boss。新方案中的这些差异不应误读为已经实现。
 
 ## 本地运行
+
+若只做不影响历史数据的本机试玩，安装依赖后从仓库根目录执行 `node scripts/playtest.cjs`。它仅监听本机并创建临时空榜单，正常停止后清理；手机接入需按 [私人试玩方案](docs/PLAYTEST.md)另外选择连接方式。
 
 验证基线：Node 24.19.0、npm 11.9.0、Python 3、Chromium；不是最低版本或完整兼容性承诺。
 
@@ -119,6 +122,7 @@ npm --prefix backend test
 # 需 Python playwright 包及 Chromium；自动启动临时服务/数据库并清理
 python3 tests/browser_smoke.py
 python3 tests/browser_ui.py
+python3 tests/browser_playtest.py
 ```
 
 已有 Node 回归测试与 Chromium 流程检查，没有 build/lint 脚本。浏览器检查含受控场景，真机和真实扬声器仍需单独验证。语法通过和 HTTP 200 不等于完整游戏验收。

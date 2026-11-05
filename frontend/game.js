@@ -525,6 +525,8 @@ function pauseGame() {
 function resumeGame() {
   if (!state.isRunning || !state.isPaused || document.hidden ||
       document.body.classList.contains("show-leaderboard")) return;
+  // A user gesture must also restore audio suspended while the app was away.
+  if (state.soundEnabled) primeAudioContext();
   updateBounds();
   state.isPaused = false;
   setScreen("battle");

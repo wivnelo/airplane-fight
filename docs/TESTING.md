@@ -16,6 +16,7 @@ node --check backend/store.js
 # 需预先安装 Python playwright 包及 Chromium；不需要安装项目业务依赖之外的 JS 包
 python3 tests/browser_smoke.py
 python3 tests/browser_ui.py
+python3 tests/browser_playtest.py
 ```
 
 Chromium 路径可用 `BROWSER_EXECUTABLE` 指定。Python Playwright 未安装时，可在独立虚拟环境安装，避免改业务依赖。浏览器脚本会自行在临时目录启动 API/SQLite 并停止、清理；API/队列测试也使用临时目录，包含预期故障日志。测试输出的错误日志不等于测试失败，以断言/退出码为准。没有浏览器时明确标记未验。
@@ -23,6 +24,10 @@ Chromium 路径可用 `BROWSER_EXECUTABLE` 指定。Python Playwright 未安装�
 UI 脚本覆盖四个视口、四个主界面与暂停、碰撞盒尺寸、点击区、记录保存、榜单/同步状态和减弱动画。异常网络和分数展示使用显式受控响应或函数场景，不写真实榜单。浏览器截图仅作内部视觉复核。
 
 Node 测试涵盖：并发保存、幂等重试、跨进程事务、只读历史导入、失败回滚/API 存活、严格输入、伪造请求头与凭证、时间/分数限制、来源/限流、连续两局提交、本地重载重试和离线运行。浏览器测试含真实输入与受控函数场景，脚本逐项标注；不能把受控场景当自然游玩。
+
+`browser_playtest.py` 使用 Chromium/CDP：真实 HTTP 请求限速为 750ms 延迟、128KiB/s 下载和 32KiB/s 上传，检查断网/恢复；响应丢失场景先让隔离后端实际保存再丢弃回复，刷新后验证同一负载幂等重试。分数与音频暂停由测试明确布置。Web Audio 使用真实用户点击解锁，再将原合成函数渲染至 OfflineAudioContext 检查波形/静音，不是扬声器听感或 Safari 证明。
+
+UI 脚本支持 `BROWSER_ENGINE=webkit`，须先成功安装对应 WebKit；具体网络阻塞记录在 STATUS，运行方法见 [私人试玩](PLAYTEST.md)。
 
 ## 本地试玩（使用隔离数据）
 

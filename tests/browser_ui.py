@@ -34,8 +34,12 @@ with tempfile.TemporaryDirectory(prefix='airplane-ui-') as data_dir:
     try:
         base = 'http://127.0.0.1:' + server.stdout.readline().strip().rsplit(' ', 1)[1]
         with sync_playwright() as p:
-            browser = p.chromium.launch(executable_path=os.environ.get('BROWSER_EXECUTABLE') or shutil.which('chromium'),
-                headless=True, args=['--no-sandbox'])
+            engine = os.environ.get('BROWSER_ENGINE', 'chromium')
+            if engine not in ('chromium', 'webkit'):
+                raise ValueError('BROWSER_ENGINE must be chromium or webkit')
+            browser = getattr(p, engine).launch(
+                executable_path=os.environ.get('BROWSER_EXECUTABLE') or (shutil.which('chromium') if engine == 'chromium' else None),
+                headless=True, args=['--no-sandbox'] if engine == 'chromium' else [])
             try:
                 for width, height in [(1280,900),(390,844),(320,568),(844,390)]:
                     ctx = browser.new_context(viewport={'width':width,'height':height}, is_mobile=width<900, has_touch=width<900)
@@ -172,4 +176,4 @@ with tempfile.TemporaryDirectory(prefix='airplane-ui-') as data_dir:
         server.terminate()
         try: server.wait(timeout=5)
         except subprocess.TimeoutExpired: server.kill();server.wait()
-print(json.dumps({'passed':len(checks),'checks':checks},ensure_ascii=False,indent=2))
+print(json.dumps({'engine':engine,'passed':len(checks),'checks':checks},ensure_ascii=False,indent=2))
