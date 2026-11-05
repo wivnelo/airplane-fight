@@ -1,175 +1,98 @@
-const express = require("express");
-const cors = require("cors");
-const fs = require("fs/promises");
-const path = require("path");
-const { randomUUID, createHash } = require("crypto");
+const express = require('express');
+const path = require('node:path');
+const { createHash } = require('node:crypto');
+const { LeaderboardStore, RequestError, RULESET } = require('./store');
 
-const PORT = process.env.PORT || 3000;
-const DATA_DIR = path.join(__dirname, "data");
-const DATA_FILE = path.join(DATA_DIR, "leaderboard.json");
-const MAX_ENTRIES = 50;
+function identity(req) {
+  // Do not trust caller-supplied forwarding headers. No proxy trust is enabled.
+  const raw = `${req.socket.remoteAddress || 'unknown'}|${req.get('user-agent') || ''}|${req.get('accept-language') || ''}`;
+  const digest = createHash('sha256').update(raw).digest('hex');
+  return { fingerprint: digest.slice(0, 32), displayName: `飞行员-${digest.slice(0, 8).toUpperCase()}` };
+}
 
-const app = express();
+function createApp({ dataDir = process.env.DATA_DIR || path.join(__dirname, 'data'),
+  allowedOrigins = (process.env.ALLOWED_ORIGINS || '').split(',').filter(Boolean),
+  rateLimit = 120, rateWindowMs = 60000 } = {}) {
+  const app = express();
+  app.disable('x-powered-by');
+  let store;
+  try { store = new LeaderboardStore(dataDir); }
+  catch (error) { console.error('[storage] unavailable:', error.code || error.name); }
+  app.locals.close = () => store?.close();
 
-app.use(
-  cors({
-    origin: "*",
-  })
-);
-app.use(express.json());
-
-async function readEntries() {
-  try {
-    const raw = await fs.readFile(DATA_FILE, "utf8");
-    const data = JSON.parse(raw);
-    if (!Array.isArray(data)) {
-      return [];
+  app.use('/api', (req, res, next) => {
+    res.set('Cache-Control', 'no-store');
+    const origin = req.get('origin');
+    if (origin) {
+      if (origin !== `${req.protocol}://${req.get('host')}` && !allowedOrigins.includes(origin))
+        return res.status(403).json({ error: 'origin not allowed' });
+      res.set('Access-Control-Allow-Origin', origin);
+      res.vary('Origin');
+      res.set('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+      res.set('Access-Control-Allow-Headers', 'Content-Type');
     }
-    const normalized = data
-      .map((entry) => normalizeEntry(entry))
-      .filter((entry) => entry && entry.fingerprint);
-
-    const deduped = new Map();
-    for (const entry of normalized) {
-      const existing = deduped.get(entry.fingerprint);
-      if (!existing) {
-        deduped.set(entry.fingerprint, entry);
-        continue;
-      }
-      if (entry.score > existing.score) {
-        deduped.set(entry.fingerprint, entry);
-      } else if (entry.score === existing.score) {
-        const existingTime = new Date(existing.playedAt).getTime();
-        const incomingTime = new Date(entry.playedAt).getTime();
-        if (incomingTime > existingTime) {
-          deduped.set(entry.fingerprint, entry);
-        }
-      }
-    }
-
-    return Array.from(deduped.values());
-  } catch (error) {
-    if (error.code === "ENOENT") {
-      return [];
-    }
-    console.error("[leaderboard] failed to read data file:", error);
-    return [];
-  }
-}
-
-async function writeEntries(entries) {
-  await fs.mkdir(DATA_DIR, { recursive: true });
-  await fs.writeFile(DATA_FILE, JSON.stringify(entries, null, 2), "utf8");
-}
-
-function clientIp(req) {
-  const forwarded = req.headers["x-forwarded-for"];
-  if (typeof forwarded === "string" && forwarded.length > 0) {
-    return forwarded.split(",")[0].trim();
-  }
-  if (req.ip) {
-    return String(req.ip).trim();
-  }
-  return (req.socket?.remoteAddress || "").trim();
-}
-
-function buildFingerprint(req) {
-  const ip = clientIp(req) || "unknown-ip";
-  const ua = req.headers["user-agent"] || "unknown-agent";
-  const acceptLang = req.headers["accept-language"] || "";
-  const raw = `${ip}|${ua}|${acceptLang}`;
-  const hash = createHash("sha256").update(raw).digest("hex");
-  const fingerprint = hash.slice(0, 32);
-  const displayName = `飞行员-${hash.slice(0, 8).toUpperCase()}`;
-  return { fingerprint, displayName };
-}
-
-function normalizeEntry(entry) {
-  if (!entry || typeof entry !== "object") {
-    return null;
-  }
-  const fingerprint = entry.fingerprint || entry.id || null;
-  const displayName =
-    entry.displayName || entry.name || (fingerprint ? `飞行员-${String(fingerprint).slice(0, 8).toUpperCase()}` : "飞行员");
-  return {
-    id: entry.id || randomUUID(),
-    fingerprint,
-    displayName,
-    score: Number.isFinite(entry.score) ? Math.floor(entry.score) : 0,
-    playedAt: entry.playedAt || new Date().toISOString(),
-  };
-}
-
-function normalizeScore(value) {
-  if (!Number.isFinite(value)) {
-    return 0;
-  }
-  return Math.max(Math.floor(value), 0);
-}
-
-app.get("/api/leaderboard", async (req, res) => {
-  const entries = await readEntries();
-  entries.sort((a, b) => b.score - a.score || new Date(a.playedAt) - new Date(b.playedAt));
-  res.json({
-    entries: entries.slice(0, MAX_ENTRIES),
+    if (req.method === 'OPTIONS') return res.sendStatus(204);
+    next();
   });
-});
-
-app.post("/api/leaderboard", async (req, res) => {
-  const { score } = req.body || {};
-
-  const numericScore = Number(score);
-  if (!Number.isFinite(numericScore)) {
-    return res.status(400).json({ error: "score must be a number" });
-  }
-
-  const normalizedScore = normalizeScore(numericScore);
-  const { fingerprint, displayName } = buildFingerprint(req);
-
-  if (!fingerprint) {
-    return res.status(400).json({ error: "unable to determine fingerprint" });
-  }
-
-  const entries = await readEntries();
-  const now = new Date().toISOString();
-  const existingIndex = entries.findIndex((item) => item.fingerprint === fingerprint);
-
-  if (existingIndex >= 0) {
-    const existing = entries[existingIndex];
-    if (normalizedScore > existing.score) {
-      existing.score = normalizedScore;
-      existing.playedAt = now;
+  const buckets = new Map();
+  app.use('/api', (req, res, next) => {
+    if (req.method !== 'POST') return next();
+    const now = Date.now();
+    // Bound both per-IP traffic and rate-limiter memory; forwarded headers cannot reset it.
+    for (const [key, value] of buckets) if (value.until <= now) buckets.delete(key);
+    const key = req.socket.remoteAddress || 'unknown';
+    if (!buckets.has(key)) {
+      if (buckets.size >= 10000) return res.status(429).json({ error: 'server busy; retry later' });
+      buckets.set(key, { count: 0, until: now + rateWindowMs });
     }
-    existing.displayName = displayName;
-    entries[existingIndex] = existing;
-    entries.sort((a, b) => b.score - a.score || new Date(a.playedAt) - new Date(b.playedAt));
-    const trimmed = entries.slice(0, MAX_ENTRIES);
-    await writeEntries(trimmed);
-    const responseEntry =
-      trimmed.find((item) => item.fingerprint === fingerprint) || existing;
-    return res.status(200).json({ entry: responseEntry, entries: trimmed });
+    const bucket = buckets.get(key);
+    if (++bucket.count > rateLimit) {
+      res.set('Retry-After', String(Math.max(1, Math.ceil((bucket.until - now) / 1000))));
+      return res.status(429).json({ error: 'too many requests' });
+    }
+    next();
+  });
+  app.use(express.json({ limit: '8kb', inflate: false }));
+  function requireStore() {
+    if (!store) throw new RequestError(503, 'leaderboard storage unavailable');
+    return store;
   }
-
-  const entry = {
-    id: randomUUID(),
-    fingerprint,
-    displayName,
-    score: normalizedScore,
-    playedAt: now,
-  };
-
-  entries.push(entry);
-  entries.sort((a, b) => b.score - a.score || new Date(a.playedAt) - new Date(b.playedAt));
-  const trimmed = entries.slice(0, MAX_ENTRIES);
-  await writeEntries(trimmed);
-
-  res.status(201).json({ entry, entries: trimmed });
-});
-
-app.get("/health", (req, res) => {
-  res.json({ ok: true, timestamp: new Date().toISOString() });
-});
-
-app.listen(PORT, () => {
-  console.log(`Leaderboard API listening on http://localhost:${PORT}`);
-});
+  app.get('/health', (req, res, next) => {
+    try { requireStore().health(); res.json({ ok: true, storage: 'ready', ruleset: RULESET }); }
+    catch (error) { next(error); }
+  });
+  app.get('/api/leaderboard', (req, res) => res.json({ entries: requireStore().list() }));
+  app.post('/api/runs', (req, res) => res.status(201).json(requireStore().createRun(identity(req))));
+  app.post('/api/leaderboard', (req, res) => {
+    const { score, durationMs, runId, token } = req.body || {};
+    if (!Number.isSafeInteger(score) || score < 0 || !Number.isSafeInteger(durationMs) || durationMs < 0 ||
+        typeof runId !== 'string' || !/^[0-9a-f-]{36}$/.test(runId) ||
+        typeof token !== 'string' || !/^[0-9a-f]{64}$/.test(token))
+      throw new RequestError(400, 'integer score/durationMs and run credentials required');
+    const result = requireStore().submit({ score, durationMs, runId, token }, identity(req));
+    res.status(result.duplicate ? 200 : 201).json(result);
+  });
+  app.use(express.static(path.join(__dirname, '..', 'frontend')));
+  app.use((error, req, res, next) => {
+    if (res.headersSent) return next(error);
+    const status = error instanceof RequestError ? error.status :
+      error.type === 'entity.too.large' ? 413 :
+      error.type === 'entity.parse.failed' ? 400 :
+      error.type === 'encoding.unsupported' ? 415 : 503;
+    if (status === 503) console.error('[request] storage failure:', error.code || error.name);
+    res.status(status).json({ error: status === 503 ? 'leaderboard storage unavailable' :
+      error instanceof RequestError ? error.message : 'invalid request body' });
+  });
+  return app;
+}
+if (require.main === module) {
+  const app = createApp();
+  const port = process.env.PORT || 3000;
+  const server = app.listen(port, process.env.HOST || '127.0.0.1', () => {
+    console.log(`Game and leaderboard listening on port ${server.address().port}`);
+  });
+  const stop = () => server.close(() => { app.locals.close(); });
+  process.once('SIGINT', stop);
+  process.once('SIGTERM', stop);
+}
+module.exports = { createApp };

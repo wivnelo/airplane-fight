@@ -38,7 +38,7 @@
               <div class="overlay-copy">
                 <p id="overlay-text">点击“开始游戏”</p>
                 <p class="hint">
-                  鼠标在界面内左右移动，按住鼠标左键或空格键持续射击
+                  左右移动鼠标控制飞机，按住左键或空格射击；手机按住画面并左右拖动
                 </p>
                 <p class="hint">击中特殊道具可短暂获得多排子弹火力</p>
               </div>
@@ -46,13 +46,17 @@
             </div>
           </div>
         </div>
+        <p id="game-status" class="game-status" aria-live="polite"></p>
+        <p id="sync-status" class="sync-status" aria-live="polite"></p>
+        <button id="retry-btn" class="hud-btn" type="button" hidden>重试提交</button>
       </section>
       <section class="instructions">
         <h1>玩法说明</h1>
         <ul>
           <li>点击画面内下方的按钮开始或重新开始游戏。</li>
           <li>鼠标在游戏区域内左右移动即可控制飞机位置。</li>
-          <li>按住鼠标左键或空格键持续发射子弹。</li>
+          <li>按住鼠标左键或空格键持续发射子弹；手机按住画面并左右拖动。</li>
+          <li>打开排行榜或切换到其他窗口会暂停；返回后点击「继续游戏」。</li>
           <li>击破敌机加分，被撞到则游戏失败。</li>
           <li>每 30 秒会掉落随机飞机道具：彩色提升火力，青绿提供 5 秒护盾。</li>
         </ul>
@@ -66,7 +70,7 @@
           <h1>排行榜</h1>
         </header>
         <p class="leaderboard-hint">
-          成绩将基于设备标识自动记录，无需输入昵称。
+          娱乐榜：根据网络与浏览器特征记录最高分，非可靠设备身份；成绩仅做基础校验。
         </p>
         <ol id="leaderboard-list" class="leaderboard-list">
           <li class="empty">暂无数据</li>
@@ -75,6 +79,7 @@
       </div>
     </section>
 
+    <script src="scores.js" defer></script>
     <script src="game.js" defer></script>
   </body>
 </html>

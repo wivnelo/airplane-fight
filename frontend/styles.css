@@ -198,6 +198,8 @@ body {
   overflow: hidden;
   border: 3px solid rgba(148, 163, 184, 0.3);
   cursor: none;
+  touch-action: none;
+  user-select: none;
 }
 
 .player,
@@ -400,6 +402,7 @@ body {
 }
 
 .overlay {
+  z-index: 10;
   position: absolute;
   inset: 0;
   display: flex;
@@ -583,4 +586,30 @@ body.show-leaderboard {
   .leaderboard-card {
     padding: 20px;
   }
+}
+
+/* Keep the playfield visible on short mobile viewports without changing its 9:16 ratio. */
+.game-status, .sync-status {
+  margin: 0;
+  font-size: 0.8rem;
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+}
+.game-status:empty, .sync-status:empty { display: none; }
+[hidden] { display: none !important; }
+.leaderboard-card { max-height: calc(100dvh - 48px); overflow-y: auto; }
+@media (max-width: 680px) and (orientation: portrait) {
+  body { padding: 8px; align-items: flex-start; }
+  .game-shell { padding: 12px; gap: 8px; }
+  .game-area { width: min(100%, calc((100dvh - 180px) * 0.5625)); align-self: center; }
+  .hud { padding-inline: 0; }
+}
+@media (max-height: 500px) and (orientation: landscape) {
+  body { padding: 8px; align-items: flex-start; }
+  .game-shell { padding: 8px; gap: 4px; }
+  .game-area { height: calc(100dvh - 100px); width: auto; align-self: center; }
+  .overlay { padding: 8px 4px; }
+  .overlay-copy .hint { display: none; }
+  .overlay-content { gap: 4px; }
+  .start-btn { margin-bottom: 4px; padding: 10px; }
 }
